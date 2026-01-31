@@ -158,8 +158,33 @@ export async function createDocument(
     
     const blockId = docRes.data?.document?.document_id;
     
-    // 3. 写入内容 - 发送消息告知用户链接和内容
-    // 注意：由于飞书文档写入API复杂，这里只创建文档，内容通过消息发送给用户
+    // 3. 授予用户编辑权限
+    // 获取当前活跃用户的 open_id
+    const { getActiveFeishuChat } = await import("./sync-service.js");
+    const activeChat = getActiveFeishuChat();
+    if (activeChat?.userId) {
+      try {
+        // 添加用户为文档协作者（编辑权限）
+        const permRes = await client.drive.permission.member.create({
+          path: { token: documentId, type: "docx" },
+          params: { need_notification: false },
+          data: {
+            member_type: "openid",
+            member_id: activeChat.userId,
+            perm: "full_access", // 完全访问权限（可编辑、删除）
+          },
+        });
+        if (permRes.code === 0) {
+          console.log(`[feishu-doc] 已授予用户 ${activeChat.userId} 编辑权限`);
+        } else {
+          console.warn(`[feishu-doc] 授权失败: ${permRes.code} ${permRes.msg}`);
+        }
+      } catch (permErr) {
+        console.warn(`[feishu-doc] 授权异常: ${permErr}`);
+      }
+    }
+    
+    // 4. 记录日志
     console.log(`[feishu-doc] 文档已创建，内容: ${content.slice(0, 50)}...`);
     
     const url = `https://feishu.cn/docx/${documentId}`;
@@ -294,6 +319,30 @@ export async function createSpreadsheet(
             ],
           },
         });
+      }
+    }
+    
+    // 授予用户编辑权限
+    const { getActiveFeishuChat } = await import("./sync-service.js");
+    const activeChat = getActiveFeishuChat();
+    if (activeChat?.userId) {
+      try {
+        const permRes = await client.drive.permission.member.create({
+          path: { token: spreadsheetToken, type: "sheet" },
+          params: { need_notification: false },
+          data: {
+            member_type: "openid",
+            member_id: activeChat.userId,
+            perm: "full_access",
+          },
+        });
+        if (permRes.code === 0) {
+          console.log(`[feishu-doc] 已授予用户 ${activeChat.userId} 表格编辑权限`);
+        } else {
+          console.warn(`[feishu-doc] 表格授权失败: ${permRes.code} ${permRes.msg}`);
+        }
+      } catch (permErr) {
+        console.warn(`[feishu-doc] 表格授权异常: ${permErr}`);
       }
     }
     
