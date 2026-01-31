@@ -9,10 +9,9 @@
     ]
   },
   "dependencies": {
-    "@wecom/crypto": "^1.0.1",
-    "xml2js": "^0.6.2"
+    "ws": "^8.16.0"
   },
   "devDependencies": {
-    "@types/xml2js": "^0.4.14"
+    "@types/ws": "^8.5.10"
   }
 }
