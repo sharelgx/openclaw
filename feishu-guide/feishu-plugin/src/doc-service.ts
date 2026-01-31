@@ -31,25 +31,25 @@ function getClient(cfg: OpenClawConfig): Lark.Client {
 
 /**
  * 将 Markdown 转换为飞书文档 Block 格式
+ * 参考：https://open.feishu.cn/document/ukTMukTMukTM/uUDN04SN0QjL1QDN/document-docx/docx-v1/document-block-children/create
  */
 function markdownToBlocks(markdown: string): any[] {
   const blocks: any[] = [];
   const lines = markdown.split("\n");
   let currentParagraph: string[] = [];
   
+  // 创建文本元素
+  const createTextElement = (content: string) => ({
+    text_run: { content }
+  });
+  
   const flushParagraph = () => {
     if (currentParagraph.length > 0) {
       const text = currentParagraph.join("\n");
       blocks.push({
-        block_type: 2, // paragraph
-        paragraph: {
-          elements: [
-            {
-              text_run: {
-                content: text,
-              },
-            },
-          ],
+        block_type: 2, // text
+        text: {
+          elements: [createTextElement(text)],
         },
       });
       currentParagraph = [];
@@ -63,7 +63,7 @@ function markdownToBlocks(markdown: string): any[] {
       blocks.push({
         block_type: 3, // heading1
         heading1: {
-          elements: [{ text_run: { content: line.slice(2) } }],
+          elements: [createTextElement(line.slice(2))],
         },
       });
     } else if (line.startsWith("## ")) {
@@ -71,7 +71,7 @@ function markdownToBlocks(markdown: string): any[] {
       blocks.push({
         block_type: 4, // heading2
         heading2: {
-          elements: [{ text_run: { content: line.slice(3) } }],
+          elements: [createTextElement(line.slice(3))],
         },
       });
     } else if (line.startsWith("### ")) {
@@ -79,7 +79,7 @@ function markdownToBlocks(markdown: string): any[] {
       blocks.push({
         block_type: 5, // heading3
         heading3: {
-          elements: [{ text_run: { content: line.slice(4) } }],
+          elements: [createTextElement(line.slice(4))],
         },
       });
     } else if (line.startsWith("- ") || line.startsWith("* ")) {
@@ -87,7 +87,7 @@ function markdownToBlocks(markdown: string): any[] {
       blocks.push({
         block_type: 14, // bullet
         bullet: {
-          elements: [{ text_run: { content: line.slice(2) } }],
+          elements: [createTextElement(line.slice(2))],
         },
       });
     } else if (/^\d+\. /.test(line)) {
@@ -95,7 +95,7 @@ function markdownToBlocks(markdown: string): any[] {
       blocks.push({
         block_type: 15, // ordered
         ordered: {
-          elements: [{ text_run: { content: line.replace(/^\d+\. /, "") } }],
+          elements: [createTextElement(line.replace(/^\d+\. /, ""))],
         },
       });
     } else if (line.startsWith("```")) {
@@ -165,9 +165,10 @@ export async function createDocument(
     if (activeChat?.userId) {
       try {
         // 添加用户为文档协作者（编辑权限）
-        const permRes = await client.drive.permission.member.create({
-          path: { token: documentId, type: "docx" },
-          params: { need_notification: false },
+        // 注意：API 是 permissionMember（驼峰命名），不是 permission.member
+        const permRes = await client.drive.permissionMember.create({
+          path: { token: documentId },
+          params: { type: "docx", need_notification: false },
           data: {
             member_type: "openid",
             member_id: activeChat.userId,
@@ -219,15 +220,16 @@ export async function appendToDocument(
     
     const blocks = markdownToBlocks(fullContent);
     
-    for (const block of blocks) {
-      await client.docx.documentBlock.createChildren({
-        path: { document_id: documentId, block_id: documentId },
-        params: { document_revision_id: -1 },
-        data: {
-          children: [block],
-        },
-      });
-    }
+    // 使用正确的 API: documentBlockChildren.create
+    // 一次性追加所有块到文档末尾
+    await client.docx.documentBlockChildren.create({
+      path: { document_id: documentId, block_id: documentId },
+      params: { document_revision_id: -1 },
+      data: {
+        children: blocks,
+        index: -1, // 追加到末尾
+      },
+    });
     
     console.log(`[feishu-doc] 内容已追加到文档: ${documentId}`);
     return { success: true };
@@ -327,9 +329,10 @@ export async function createSpreadsheet(
     const activeChat = getActiveFeishuChat();
     if (activeChat?.userId) {
       try {
-        const permRes = await client.drive.permission.member.create({
-          path: { token: spreadsheetToken, type: "sheet" },
-          params: { need_notification: false },
+        // 注意：API 是 permissionMember（驼峰命名），不是 permission.member
+        const permRes = await client.drive.permissionMember.create({
+          path: { token: spreadsheetToken },
+          params: { type: "sheet", need_notification: false },
           data: {
             member_type: "openid",
             member_id: activeChat.userId,
@@ -357,6 +360,70 @@ export async function createSpreadsheet(
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     console.error(`[feishu-doc] 创建表格失败: ${error}`);
+    return { success: false, error };
+  }
+}
+
+/**
+ * 读取文档内容
+ */
+export async function readDocument(
+  cfg: OpenClawConfig,
+  documentId: string
+): Promise<{ success: boolean; content?: string; error?: string }> {
+  try {
+    const client = getClient(cfg);
+    
+    const res = await client.docx.document.rawContent({
+      path: { document_id: documentId },
+    });
+    
+    if (res.code !== 0) {
+      return {
+        success: false,
+        error: `读取文档失败: ${res.code} - ${res.msg}`,
+      };
+    }
+    
+    return {
+      success: true,
+      content: res.data?.content || "",
+    };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    console.error(`[feishu-doc] 读取文档失败: ${error}`);
+    return { success: false, error };
+  }
+}
+
+/**
+ * 删除文档或表格
+ */
+export async function deleteFile(
+  cfg: OpenClawConfig,
+  fileToken: string,
+  fileType: "docx" | "sheet" | "file" | "folder" = "docx"
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const client = getClient(cfg);
+    
+    const res = await client.drive.file.delete({
+      path: { file_token: fileToken },
+      params: { type: fileType },
+    });
+    
+    if (res.code !== 0) {
+      return {
+        success: false,
+        error: `删除文件失败: ${res.code} - ${res.msg}`,
+      };
+    }
+    
+    console.log(`[feishu-doc] 文件已删除: ${fileToken} (task_id: ${res.data?.task_id})`);
+    return { success: true };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    console.error(`[feishu-doc] 删除文件失败: ${error}`);
     return { success: false, error };
   }
 }

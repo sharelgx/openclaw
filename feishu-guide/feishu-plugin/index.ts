@@ -8,6 +8,9 @@ import {
   createSaveToFeishuDocTool,
   createFeishuSheetTool,
   createListFoldersTool,
+  createReadFeishuDocTool,
+  createAppendToFeishuDocTool,
+  createDeleteFeishuFileTool,
   setToolConfig,
 } from "./src/feishu-tools.js";
 
@@ -76,6 +79,39 @@ const plugin = {
         return createListFoldersTool();
       },
       { names: ["list_feishu_folders"] }
+    );
+
+    // 注册 AI 工具：读取飞书文档
+    api.registerTool(
+      (ctx) => {
+        if (ctx.config) {
+          setToolConfig(ctx.config);
+        }
+        return createReadFeishuDocTool();
+      },
+      { names: ["read_feishu_doc"] }
+    );
+
+    // 注册 AI 工具：追加内容到飞书文档
+    api.registerTool(
+      (ctx) => {
+        if (ctx.config) {
+          setToolConfig(ctx.config);
+        }
+        return createAppendToFeishuDocTool();
+      },
+      { names: ["append_to_feishu_doc"] }
+    );
+
+    // 注册 AI 工具：删除飞书文件
+    api.registerTool(
+      (ctx) => {
+        if (ctx.config) {
+          setToolConfig(ctx.config);
+        }
+        return createDeleteFeishuFileTool();
+      },
+      { names: ["delete_feishu_file"] }
     );
 
     // 注册消息发送钩子，实现双向同步

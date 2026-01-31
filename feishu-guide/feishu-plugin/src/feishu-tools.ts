@@ -9,6 +9,9 @@ import {
   saveToDailyDocument,
   createSpreadsheet,
   listFolders,
+  readDocument,
+  deleteFile,
+  appendToDocument,
 } from "./doc-service.js";
 
 // 配置引用
@@ -184,6 +187,175 @@ export function createListFoldersTool() {
         }
         return {
           content: [{ type: "text", text: `❌ 获取文件夹列表失败：${result.error}` }],
+          details: { success: false, error: result.error },
+        };
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: "text", text: `❌ 操作失败：${error}` }],
+          details: { success: false, error },
+        };
+      }
+    },
+  };
+}
+
+/**
+ * 创建读取飞书文档工具
+ */
+export function createReadFeishuDocTool() {
+  return {
+    name: "read_feishu_doc",
+    description: "读取飞书云文档的内容。需要提供文档ID（从文档URL中获取，如 https://feishu.cn/docx/ABC123 中的 ABC123）",
+    parameters: Type.Object({
+      documentId: Type.String({ description: "文档ID（从文档链接中获取）" }),
+    }),
+    async execute(_id: string, params: Record<string, unknown>) {
+      const cfg = configRef;
+      if (!cfg) {
+        return {
+          content: [{ type: "text", text: "❌ 配置未找到" }],
+          details: { success: false, error: "配置未找到" },
+        };
+      }
+
+      const documentId = String(params.documentId || "");
+      if (!documentId.trim()) {
+        return {
+          content: [{ type: "text", text: "❌ 文档ID不能为空" }],
+          details: { success: false, error: "文档ID为空" },
+        };
+      }
+
+      try {
+        const result = await readDocument(cfg, documentId);
+        if (result.success) {
+          const content = result.content || "（文档为空）";
+          return {
+            content: [{ type: "text", text: `📄 文档内容：\n\n${content}` }],
+            details: { success: true, content: result.content, documentId },
+          };
+        }
+        return {
+          content: [{ type: "text", text: `❌ 读取文档失败：${result.error}` }],
+          details: { success: false, error: result.error },
+        };
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: "text", text: `❌ 操作失败：${error}` }],
+          details: { success: false, error },
+        };
+      }
+    },
+  };
+}
+
+/**
+ * 创建追加内容到飞书文档工具
+ */
+export function createAppendToFeishuDocTool() {
+  return {
+    name: "append_to_feishu_doc",
+    description: "向现有飞书文档追加内容。内容会添加到文档末尾，自动带有时间戳分隔。",
+    parameters: Type.Object({
+      documentId: Type.String({ description: "文档ID（从文档链接中获取）" }),
+      content: Type.String({ description: "要追加的内容（支持 Markdown 格式）" }),
+    }),
+    async execute(_id: string, params: Record<string, unknown>) {
+      const cfg = configRef;
+      if (!cfg) {
+        return {
+          content: [{ type: "text", text: "❌ 配置未找到" }],
+          details: { success: false, error: "配置未找到" },
+        };
+      }
+
+      const documentId = String(params.documentId || "");
+      const content = String(params.content || "");
+
+      if (!documentId.trim()) {
+        return {
+          content: [{ type: "text", text: "❌ 文档ID不能为空" }],
+          details: { success: false, error: "文档ID为空" },
+        };
+      }
+
+      if (!content.trim()) {
+        return {
+          content: [{ type: "text", text: "❌ 内容不能为空" }],
+          details: { success: false, error: "内容为空" },
+        };
+      }
+
+      try {
+        const result = await appendToDocument(cfg, documentId, content);
+        if (result.success) {
+          const url = `https://feishu.cn/docx/${documentId}`;
+          return {
+            content: [{ type: "text", text: `✅ 内容已追加到文档！\n🔗 链接：${url}` }],
+            details: { success: true, documentId, url },
+          };
+        }
+        return {
+          content: [{ type: "text", text: `❌ 追加内容失败：${result.error}` }],
+          details: { success: false, error: result.error },
+        };
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: "text", text: `❌ 操作失败：${error}` }],
+          details: { success: false, error },
+        };
+      }
+    },
+  };
+}
+
+/**
+ * 创建删除飞书文档工具
+ */
+export function createDeleteFeishuFileTool() {
+  return {
+    name: "delete_feishu_file",
+    description: "删除飞书云文档或表格。删除后文件会移到回收站。",
+    parameters: Type.Object({
+      fileToken: Type.String({ description: "文件Token/ID（从文件链接中获取）" }),
+      fileType: Type.Unsafe<"docx" | "sheet" | "file" | "folder">({
+        type: "string",
+        enum: ["docx", "sheet", "file", "folder"],
+        description: "文件类型：docx=文档，sheet=表格，file=普通文件，folder=文件夹",
+      }),
+    }),
+    async execute(_id: string, params: Record<string, unknown>) {
+      const cfg = configRef;
+      if (!cfg) {
+        return {
+          content: [{ type: "text", text: "❌ 配置未找到" }],
+          details: { success: false, error: "配置未找到" },
+        };
+      }
+
+      const fileToken = String(params.fileToken || "");
+      const fileType = (params.fileType || "docx") as "docx" | "sheet" | "file" | "folder";
+
+      if (!fileToken.trim()) {
+        return {
+          content: [{ type: "text", text: "❌ 文件Token不能为空" }],
+          details: { success: false, error: "文件Token为空" },
+        };
+      }
+
+      try {
+        const result = await deleteFile(cfg, fileToken, fileType);
+        if (result.success) {
+          return {
+            content: [{ type: "text", text: `✅ 文件已删除（已移至回收站）` }],
+            details: { success: true, fileToken, fileType },
+          };
+        }
+        return {
+          content: [{ type: "text", text: `❌ 删除文件失败：${result.error}` }],
           details: { success: false, error: result.error },
         };
       } catch (err) {
