@@ -17,6 +17,8 @@ import { WebSocketServer, WebSocket } from "ws";
 // ==================== 配置信息 ====================
 const CONFIG = {
   corpId: "wwd942eecef040d78e",
+  corpSecret: "XYqbQvhgIj5E0Q59ZqRsSu9cmJpoHFEUDlkVr9h-iX4",
+  agentId: "1000004",
   token: "pKr0mMp9Z6Op",
   encodingAESKey: "3hPX7dwAYg26ClhFiaGHeIzgXUr8HFh941Yul8yRsIO",
   port: 3003,
@@ -25,6 +27,9 @@ const CONFIG = {
 
 // AES 密钥
 const aesKey = Buffer.from(CONFIG.encodingAESKey + "=", "base64");
+
+// Access Token 缓存
+let cachedToken = null;
 
 // 已连接的 OpenClaw 客户端
 const connectedClients = new Set();
@@ -54,6 +59,89 @@ function decrypt(encrypted) {
   const message = decrypted.subarray(20, 20 + msgLen).toString("utf8");
   
   return message;
+}
+
+// ==================== Access Token 管理 ====================
+
+async function getAccessToken() {
+  // 检查缓存
+  if (cachedToken && Date.now() < cachedToken.expiresAt - 60000) {
+    return cachedToken.token;
+  }
+
+  // 获取新 token
+  const url = `https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${CONFIG.corpId}&corpsecret=${CONFIG.corpSecret}`;
+  const res = await fetch(url);
+  const data = await res.json();
+
+  if (data.errcode && data.errcode !== 0) {
+    throw new Error(`获取 access_token 失败: ${data.errcode} - ${data.errmsg}`);
+  }
+
+  cachedToken = {
+    token: data.access_token,
+    expiresAt: Date.now() + (data.expires_in * 1000),
+  };
+
+  console.log("[Token] 获取新的 access_token");
+  return cachedToken.token;
+}
+
+// ==================== 发送消息到企业微信 ====================
+
+async function sendMessageToWecom(to, content, retried = false) {
+  try {
+    const accessToken = await getAccessToken();
+    const url = `https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=${accessToken}`;
+
+    // 解析接收者
+    let toUser = "";
+    let toChat = "";
+
+    if (to.startsWith("user:")) {
+      toUser = to.slice(5);
+    } else if (to.startsWith("chat:")) {
+      toChat = to.slice(5);
+    } else {
+      toUser = to;
+    }
+
+    const body = {
+      agentid: parseInt(CONFIG.agentId, 10),
+      msgtype: "text",
+      text: { content },
+      safe: 0,
+    };
+
+    if (toChat) {
+      body.chatid = toChat;
+    } else {
+      body.touser = toUser;
+    }
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    const data = await res.json();
+
+    if (data.errcode && data.errcode !== 0) {
+      // Token 过期，清除缓存重试
+      if ((data.errcode === 40014 || data.errcode === 42001) && !retried) {
+        cachedToken = null;
+        return sendMessageToWecom(to, content, true);
+      }
+      throw new Error(`${data.errcode} - ${data.errmsg}`);
+    }
+
+    console.log(`[发送] 成功发送到 ${to}`);
+    return { success: true, msgid: data.msgid };
+  } catch (err) {
+    console.error(`[发送] 失败: ${err.message}`);
+    return { success: false, error: err.message };
+  }
 }
 
 // ==================== 推送消息给 OpenClaw ====================
@@ -211,7 +299,7 @@ wss.on("connection", (ws, req) => {
     },
   }));
 
-  ws.on("message", (data) => {
+  ws.on("message", async (data) => {
     try {
       const msg = JSON.parse(data.toString());
       console.log(`[WS] 收到消息: ${msg.type}`);
@@ -219,6 +307,27 @@ wss.on("connection", (ws, req) => {
       // 处理心跳
       if (msg.type === "ping") {
         ws.send(JSON.stringify({ type: "pong" }));
+        return;
+      }
+
+      // 处理发送消息请求
+      if (msg.type === "send_message") {
+        const { to, content, requestId } = msg.data || {};
+        
+        if (!to || !content) {
+          ws.send(JSON.stringify({
+            type: "send_result",
+            data: { requestId, success: false, error: "缺少 to 或 content" },
+          }));
+          return;
+        }
+
+        const result = await sendMessageToWecom(to, content);
+        ws.send(JSON.stringify({
+          type: "send_result",
+          data: { requestId, ...result },
+        }));
+        return;
       }
     } catch (err) {
       console.error(`[WS] 解析消息失败: ${err.message}`);

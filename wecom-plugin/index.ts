@@ -10,8 +10,15 @@ import { getActiveWecomChat, syncMessageToWecom, getWecomConfig } from "./src/sy
 import {
   createReadWecomSheetTool,
   createReadWecomDocTool,
-  createGetCustomerListTool,
   createGetCustomerDetailTool,
+  createCreateWecomSheetTool,
+  createListAllCustomersTool,
+  createCreateWecomDocTool,
+  createEditWecomDocTool,
+  createDeleteWecomDocTool,
+  createAddSheetRecordTool,
+  createUpdateSheetRecordTool,
+  createDeleteSheetRecordTool,
   setToolConfig,
 } from "./src/wecom-tools.js";
 
@@ -64,17 +71,6 @@ const plugin = {
       { names: ["read_wecom_doc"] }
     );
 
-    // 注册 AI 工具：获取客户列表
-    api.registerTool(
-      (ctx) => {
-        if (ctx.config) {
-          setToolConfig(ctx.config);
-        }
-        return createGetCustomerListTool();
-      },
-      { names: ["get_wecom_customers"] }
-    );
-
     // 注册 AI 工具：获取客户详情
     api.registerTool(
       (ctx) => {
@@ -85,6 +81,98 @@ const plugin = {
       },
       { names: ["get_wecom_customer_detail"] }
     );
+
+    // 注册 AI 工具：创建智能表格
+    api.registerTool(
+      (ctx) => {
+        if (ctx.config) {
+          setToolConfig(ctx.config);
+        }
+        return createCreateWecomSheetTool();
+      },
+      { names: ["create_wecom_sheet"] }
+    );
+
+    // 注册 AI 工具：列出所有客户
+    api.logger.info("[wecom] 正在注册 list_all_wecom_customers 工具...");
+    api.registerTool(
+      (ctx) => {
+        if (ctx.config) {
+          setToolConfig(ctx.config);
+        }
+        return createListAllCustomersTool();
+      },
+      { names: ["list_all_wecom_customers"] }
+    );
+    api.logger.info("[wecom] list_all_wecom_customers 工具注册完成");
+
+    // 注册 AI 工具：创建智能文档
+    api.registerTool(
+      (ctx) => {
+        if (ctx.config) {
+          setToolConfig(ctx.config);
+        }
+        return createCreateWecomDocTool();
+      },
+      { names: ["create_wecom_doc"] }
+    );
+
+    // 注册 AI 工具：编辑智能文档
+    api.registerTool(
+      (ctx) => {
+        if (ctx.config) {
+          setToolConfig(ctx.config);
+        }
+        return createEditWecomDocTool();
+      },
+      { names: ["edit_wecom_doc"] }
+    );
+
+    // 注册 AI 工具：删除文档/表格
+    api.registerTool(
+      (ctx) => {
+        if (ctx.config) {
+          setToolConfig(ctx.config);
+        }
+        return createDeleteWecomDocTool();
+      },
+      { names: ["delete_wecom_doc"] }
+    );
+
+    // 注册 AI 工具：添加智能表格记录
+    api.registerTool(
+      (ctx) => {
+        if (ctx.config) {
+          setToolConfig(ctx.config);
+        }
+        return createAddSheetRecordTool();
+      },
+      { names: ["add_wecom_sheet_record"] }
+    );
+
+    // 注册 AI 工具：更新智能表格记录
+    api.registerTool(
+      (ctx) => {
+        if (ctx.config) {
+          setToolConfig(ctx.config);
+        }
+        return createUpdateSheetRecordTool();
+      },
+      { names: ["update_wecom_sheet_record"] }
+    );
+
+    // 注册 AI 工具：删除智能表格记录
+    api.registerTool(
+      (ctx) => {
+        if (ctx.config) {
+          setToolConfig(ctx.config);
+        }
+        return createDeleteSheetRecordTool();
+      },
+      { names: ["delete_wecom_sheet_record"] }
+    );
+
+    api.logger.info("[wecom] 所有文档/表格工具注册完成");
 
     // 注册消息发送钩子，实现双向同步
     api.registerHook(

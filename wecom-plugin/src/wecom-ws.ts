@@ -7,6 +7,7 @@ import type { ChannelGatewayContext, PluginRuntime } from "openclaw/plugin-sdk";
 import { getWecomRuntime } from "./runtime.js";
 import { sendMessageWecom } from "./send.js";
 import { setActiveWecomChat } from "./sync-service.js";
+import { setSharedWebSocket } from "./ws-connection.js";
 
 export type WecomWsContext = Pick<
   ChannelGatewayContext,
@@ -224,6 +225,7 @@ export async function startWecomWs(ctx: WecomWsContext): Promise<void> {
     ws.on("open", () => {
       ctx.log?.info?.("[wecom] 已连接到中转服务器");
       ctx.setStatus?.({ accountId: ctx.accountId, running: true, lastError: null });
+      setSharedWebSocket(ws);
     });
 
     ws.on("message", async (data) => {
@@ -264,6 +266,7 @@ export async function startWecomWs(ctx: WecomWsContext): Promise<void> {
     ws.on("close", () => {
       ctx.log?.warn?.("[wecom] 连接断开");
       ctx.setStatus?.({ accountId: ctx.accountId, running: false });
+      setSharedWebSocket(null);
       
       // 重连
       if (!isStopped) {

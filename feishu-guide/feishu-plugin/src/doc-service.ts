@@ -308,7 +308,12 @@ export async function createSpreadsheet(
     
     // 如果有数据，写入表格
     if (data && data.length > 0) {
-      const sheetId = createRes.data?.spreadsheet?.sheet_list?.[0]?.sheet_id;
+      // 使用 spreadsheetSheet.query 获取 sheet_id
+      const queryRes = await client.sheets.spreadsheetSheet.query({
+        path: { spreadsheet_token: spreadsheetToken },
+      });
+      const sheetId = queryRes.data?.sheets?.[0]?.sheet_id;
+      
       if (sheetId) {
         await client.sheets.spreadsheetSheetValues.batchUpdate({
           path: { spreadsheet_token: spreadsheetToken },
@@ -321,6 +326,9 @@ export async function createSpreadsheet(
             ],
           },
         });
+        console.log(`[feishu-doc] 表格数据已写入: ${sheetId}`);
+      } else {
+        console.warn(`[feishu-doc] 未获取到 sheetId，跳过数据写入`);
       }
     }
     
