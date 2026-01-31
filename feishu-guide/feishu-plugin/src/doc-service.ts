@@ -315,18 +315,21 @@ export async function createSpreadsheet(
       const sheetId = queryRes.data?.sheets?.[0]?.sheet_id;
       
       if (sheetId) {
-        await client.sheets.spreadsheetSheetValues.batchUpdate({
-          path: { spreadsheet_token: spreadsheetToken },
+        // 使用 REST API 写入数据 (SDK 没有封装 spreadsheetSheetValues)
+        const colEnd = String.fromCharCode(64 + data[0].length); // A=65, 1->A, 2->B, etc.
+        const range = `${sheetId}!A1:${colEnd}${data.length}`;
+        
+        await client.request({
+          method: "PUT",
+          url: `/open-apis/sheets/v2/spreadsheets/${spreadsheetToken}/values`,
           data: {
-            value_ranges: [
-              {
-                range: `${sheetId}!A1`,
-                values: data,
-              },
-            ],
+            valueRange: {
+              range,
+              values: data,
+            },
           },
         });
-        console.log(`[feishu-doc] 表格数据已写入: ${sheetId}`);
+        console.log(`[feishu-doc] 表格数据已写入: ${range}`);
       } else {
         console.warn(`[feishu-doc] 未获取到 sheetId，跳过数据写入`);
       }

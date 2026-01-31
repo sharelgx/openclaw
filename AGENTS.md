@@ -780,7 +780,16 @@ console.log(`[feishu-debug] 参数: ${JSON.stringify(params)}`);
 
 ## 12. 版本历史
 
-### v2026.01.31.7 (最新)
+### v2026.01.31.8 (最新)
+- ✅ 修复表格数据写入功能
+  - 使用 `spreadsheetSheet.query` 替代 `spreadsheet.get` 获取 sheetId
+  - 使用 REST API (`client.request`) 替代不存在的 `spreadsheetSheetValues.batchUpdate`
+- ✅ 回归测试：全部 9 项测试通过
+  - 文档：创建、读取、追加、编辑、删除
+  - 表格：创建、写入数据、删除
+  - 文件夹：列表
+
+### v2026.01.31.7
 - ✅ 添加编辑文档功能 (`edit_feishu_doc`)
 - ✅ 确认删除文档功能正常 (`delete_feishu_file`)
 - ✅ 全部 5 项文档功能测试通过
