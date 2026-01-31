@@ -1,0 +1,363 @@
+/**
+ * 飞书云文档服务
+ * 支持创建文档、保存内容、追加到每日文档
+ */
+import * as Lark from "@larksuiteoapi/node-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk";
+
+// 缓存客户端
+let cachedClient: Lark.Client | null = null;
+
+function getClient(cfg: OpenClawConfig): Lark.Client {
+  if (cachedClient) return cachedClient;
+  
+  const feishuConfig = cfg.channels?.feishu as any;
+  const appId = feishuConfig?.appId;
+  const appSecret = feishuConfig?.appSecret;
+  
+  if (!appId || !appSecret) {
+    throw new Error("飞书 appId/appSecret 未配置");
+  }
+  
+  cachedClient = new Lark.Client({
+    appId,
+    appSecret,
+    appType: Lark.AppType.SelfBuild,
+    domain: Lark.Domain.Feishu,
+  });
+  
+  return cachedClient;
+}
+
+/**
+ * 将 Markdown 转换为飞书文档 Block 格式
+ */
+function markdownToBlocks(markdown: string): any[] {
+  const blocks: any[] = [];
+  const lines = markdown.split("\n");
+  let currentParagraph: string[] = [];
+  
+  const flushParagraph = () => {
+    if (currentParagraph.length > 0) {
+      const text = currentParagraph.join("\n");
+      blocks.push({
+        block_type: 2, // paragraph
+        paragraph: {
+          elements: [
+            {
+              text_run: {
+                content: text,
+              },
+            },
+          ],
+        },
+      });
+      currentParagraph = [];
+    }
+  };
+  
+  for (const line of lines) {
+    // 标题
+    if (line.startsWith("# ")) {
+      flushParagraph();
+      blocks.push({
+        block_type: 3, // heading1
+        heading1: {
+          elements: [{ text_run: { content: line.slice(2) } }],
+        },
+      });
+    } else if (line.startsWith("## ")) {
+      flushParagraph();
+      blocks.push({
+        block_type: 4, // heading2
+        heading2: {
+          elements: [{ text_run: { content: line.slice(3) } }],
+        },
+      });
+    } else if (line.startsWith("### ")) {
+      flushParagraph();
+      blocks.push({
+        block_type: 5, // heading3
+        heading3: {
+          elements: [{ text_run: { content: line.slice(4) } }],
+        },
+      });
+    } else if (line.startsWith("- ") || line.startsWith("* ")) {
+      flushParagraph();
+      blocks.push({
+        block_type: 14, // bullet
+        bullet: {
+          elements: [{ text_run: { content: line.slice(2) } }],
+        },
+      });
+    } else if (/^\d+\. /.test(line)) {
+      flushParagraph();
+      blocks.push({
+        block_type: 15, // ordered
+        ordered: {
+          elements: [{ text_run: { content: line.replace(/^\d+\. /, "") } }],
+        },
+      });
+    } else if (line.startsWith("```")) {
+      flushParagraph();
+      // 代码块开始/结束，简单处理
+    } else if (line.trim() === "") {
+      flushParagraph();
+    } else {
+      currentParagraph.push(line);
+    }
+  }
+  
+  flushParagraph();
+  return blocks;
+}
+
+export interface CreateDocResult {
+  success: boolean;
+  documentId?: string;
+  url?: string;
+  error?: string;
+}
+
+/**
+ * 创建新文档
+ */
+export async function createDocument(
+  cfg: OpenClawConfig,
+  title: string,
+  content: string,
+  folderToken?: string
+): Promise<CreateDocResult> {
+  try {
+    const client = getClient(cfg);
+    
+    // 1. 创建文档
+    const createRes = await client.docx.document.create({
+      data: {
+        title,
+        folder_token: folderToken || "",
+      },
+    });
+    
+    if (createRes.code !== 0) {
+      return {
+        success: false,
+        error: `创建文档失败: ${createRes.code} - ${createRes.msg}`,
+      };
+    }
+    
+    const documentId = createRes.data?.document?.document_id;
+    if (!documentId) {
+      return { success: false, error: "未获取到文档 ID" };
+    }
+    
+    // 2. 获取文档的 block_id (根节点)
+    const docRes = await client.docx.document.get({
+      path: { document_id: documentId },
+    });
+    
+    const blockId = docRes.data?.document?.document_id;
+    
+    // 3. 写入内容
+    const blocks = markdownToBlocks(content);
+    
+    if (blocks.length > 0) {
+      // 创建子块
+      for (const block of blocks) {
+        await client.docx.documentBlock.createChildren({
+          path: { document_id: documentId, block_id: documentId },
+          params: { document_revision_id: -1 },
+          data: {
+            children: [block],
+          },
+        });
+      }
+    }
+    
+    const url = `https://feishu.cn/docx/${documentId}`;
+    console.log(`[feishu-doc] 文档创建成功: ${url}`);
+    
+    return {
+      success: true,
+      documentId,
+      url,
+    };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    console.error(`[feishu-doc] 创建文档失败: ${error}`);
+    return { success: false, error };
+  }
+}
+
+/**
+ * 追加内容到已有文档
+ */
+export async function appendToDocument(
+  cfg: OpenClawConfig,
+  documentId: string,
+  content: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const client = getClient(cfg);
+    
+    // 添加分隔线和时间戳
+    const timestamp = new Date().toLocaleString("zh-CN");
+    const fullContent = `\n---\n📅 ${timestamp}\n\n${content}`;
+    
+    const blocks = markdownToBlocks(fullContent);
+    
+    for (const block of blocks) {
+      await client.docx.documentBlock.createChildren({
+        path: { document_id: documentId, block_id: documentId },
+        params: { document_revision_id: -1 },
+        data: {
+          children: [block],
+        },
+      });
+    }
+    
+    console.log(`[feishu-doc] 内容已追加到文档: ${documentId}`);
+    return { success: true };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    console.error(`[feishu-doc] 追加内容失败: ${error}`);
+    return { success: false, error };
+  }
+}
+
+// 每日文档缓存 (日期 -> 文档ID)
+const dailyDocCache = new Map<string, string>();
+
+/**
+ * 保存到每日文档
+ * 如果当天文档不存在则创建，存在则追加
+ */
+export async function saveToDailyDocument(
+  cfg: OpenClawConfig,
+  content: string,
+  folderToken?: string
+): Promise<CreateDocResult> {
+  const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+  const title = `📝 每日记录 - ${today}`;
+  
+  // 检查缓存
+  const cachedDocId = dailyDocCache.get(today);
+  if (cachedDocId) {
+    const appendResult = await appendToDocument(cfg, cachedDocId, content);
+    if (appendResult.success) {
+      return {
+        success: true,
+        documentId: cachedDocId,
+        url: `https://feishu.cn/docx/${cachedDocId}`,
+      };
+    }
+    // 如果追加失败，可能文档被删除了，清除缓存重新创建
+    dailyDocCache.delete(today);
+  }
+  
+  // 创建新的每日文档
+  const result = await createDocument(cfg, title, content, folderToken);
+  if (result.success && result.documentId) {
+    dailyDocCache.set(today, result.documentId);
+  }
+  
+  return result;
+}
+
+/**
+ * 创建电子表格
+ */
+export async function createSpreadsheet(
+  cfg: OpenClawConfig,
+  title: string,
+  data?: string[][]
+): Promise<{ success: boolean; spreadsheetToken?: string; url?: string; error?: string }> {
+  try {
+    const client = getClient(cfg);
+    
+    const createRes = await client.sheets.spreadsheet.create({
+      data: { title },
+    });
+    
+    if (createRes.code !== 0) {
+      return {
+        success: false,
+        error: `创建表格失败: ${createRes.code} - ${createRes.msg}`,
+      };
+    }
+    
+    const spreadsheetToken = createRes.data?.spreadsheet?.spreadsheet_token;
+    if (!spreadsheetToken) {
+      return { success: false, error: "未获取到表格 Token" };
+    }
+    
+    // 如果有数据，写入表格
+    if (data && data.length > 0) {
+      const sheetId = createRes.data?.spreadsheet?.sheet_list?.[0]?.sheet_id;
+      if (sheetId) {
+        await client.sheets.spreadsheetSheetValues.batchUpdate({
+          path: { spreadsheet_token: spreadsheetToken },
+          data: {
+            value_ranges: [
+              {
+                range: `${sheetId}!A1`,
+                values: data,
+              },
+            ],
+          },
+        });
+      }
+    }
+    
+    const url = `https://feishu.cn/sheets/${spreadsheetToken}`;
+    console.log(`[feishu-doc] 表格创建成功: ${url}`);
+    
+    return {
+      success: true,
+      spreadsheetToken,
+      url,
+    };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    console.error(`[feishu-doc] 创建表格失败: ${error}`);
+    return { success: false, error };
+  }
+}
+
+/**
+ * 列出云空间文件夹
+ */
+export async function listFolders(
+  cfg: OpenClawConfig,
+  folderToken?: string
+): Promise<{ success: boolean; folders?: Array<{ token: string; name: string }>; error?: string }> {
+  try {
+    const client = getClient(cfg);
+    
+    const res = await client.drive.file.list({
+      params: {
+        folder_token: folderToken || "",
+        page_size: 50,
+      },
+    });
+    
+    if (res.code !== 0) {
+      return {
+        success: false,
+        error: `获取文件夹列表失败: ${res.code} - ${res.msg}`,
+      };
+    }
+    
+    const folders = (res.data?.files || [])
+      .filter((f: any) => f.type === "folder")
+      .map((f: any) => ({
+        token: f.token,
+        name: f.name,
+      }));
+    
+    return { success: true, folders };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    return { success: false, error };
+  }
+}
