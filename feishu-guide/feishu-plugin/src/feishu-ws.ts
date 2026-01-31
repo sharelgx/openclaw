@@ -287,9 +287,59 @@ export async function startFeishuWs(ctx: FeishuWsContext): Promise<void> {
 
   ctx.log?.debug?.(`[feishu] 防抖时间: ${inboundDebounceMs}ms`);
 
-  // 创建防抖器
+  // 消息队列：支持并发处理多条消息
+  const messageQueue: Array<{
+    entry: FeishuMessageEntry;
+    addedAt: number;
+  }> = [];
+  let isProcessing = false;
+  const MAX_CONCURRENT = 3; // 最大并发处理数
+  let activeCount = 0;
+
+  // 处理队列中的消息
+  const processQueue = async () => {
+    if (isProcessing || messageQueue.length === 0 || activeCount >= MAX_CONCURRENT) {
+      return;
+    }
+
+    const item = messageQueue.shift();
+    if (!item) return;
+
+    activeCount++;
+    const { entry } = item;
+
+    ctx.log?.info?.(
+      `[feishu] 开始处理消息 chat=${entry.chatId} from=${entry.senderId} (队列剩余=${messageQueue.length}, 活跃=${activeCount})`,
+    );
+
+    // 异步处理，不阻塞
+    handleFeishuMessage({
+      chatId: entry.chatId,
+      chatType: entry.chatType,
+      senderId: entry.senderId,
+      text: entry.text,
+      messageId: entry.messageId,
+      ctx,
+      core,
+    })
+      .catch((err) => {
+        ctx.log?.error?.(`[feishu] 消息处理失败: ${String(err)}`);
+      })
+      .finally(() => {
+        activeCount--;
+        // 继续处理队列
+        processQueue();
+      });
+
+    // 如果还有并发余量，继续处理下一条
+    if (activeCount < MAX_CONCURRENT && messageQueue.length > 0) {
+      processQueue();
+    }
+  };
+
+  // 创建防抖器（短防抖，主要用于合并快速连续输入）
   const inboundDebouncer = core.channel.debounce.createInboundDebouncer<FeishuMessageEntry>({
-    debounceMs: inboundDebounceMs,
+    debounceMs: Math.min(inboundDebounceMs, 500), // 最多等 500ms
     buildKey: (entry) => `feishu:${ctx.accountId}:${entry.chatId}:${entry.senderId}`,
     shouldDebounce: (entry) => {
       if (!entry.text.trim()) return false;
@@ -308,23 +358,31 @@ export async function startFeishuWs(ctx: FeishuWsContext): Promise<void> {
               .filter(Boolean)
               .join("\n");
 
+      // 如果当前有消息在处理，发送排队提示
+      const to = last.chatType === "p2p" ? `user:${last.senderId}` : last.chatId;
+      if (activeCount > 0) {
+        try {
+          await sendMessageFeishu(to, `📥 消息已收到，正在排队处理（前面还有 ${activeCount} 条消息）...`, {
+            cfg: ctx.cfg,
+            accountId: ctx.accountId,
+          });
+        } catch (err) {
+          ctx.log?.warn?.(`[feishu] 发送排队提示失败: ${String(err)}`);
+        }
+      }
+
+      // 加入队列
+      messageQueue.push({
+        entry: { ...last, text },
+        addedAt: Date.now(),
+      });
+
       ctx.log?.info?.(
-        `[feishu] 处理 ${entries.length} 条消息 chat=${last.chatId} from=${last.senderId} len=${text.length}`,
+        `[feishu] 消息加入队列 chat=${last.chatId} from=${last.senderId} (队列长度=${messageQueue.length})`,
       );
 
-      try {
-        await handleFeishuMessage({
-          chatId: last.chatId,
-          chatType: last.chatType,
-          senderId: last.senderId,
-          text,
-          messageId: last.messageId,
-          ctx,
-          core,
-        });
-      } catch (err) {
-        ctx.log?.error?.(`[feishu] 消息处理失败: ${String(err)}`);
-      }
+      // 触发处理
+      processQueue();
     },
     onError: (err) => {
       ctx.log?.error?.(`[feishu] debounce flush 失败: ${String(err)}`);
