@@ -11,6 +11,7 @@ import {
   createReadFeishuDocTool,
   createAppendToFeishuDocTool,
   createDeleteFeishuFileTool,
+  createEditFeishuDocTool,
   setToolConfig,
 } from "./src/feishu-tools.js";
 
@@ -112,6 +113,17 @@ const plugin = {
         return createDeleteFeishuFileTool();
       },
       { names: ["delete_feishu_file"] }
+    );
+
+    // 注册 AI 工具：编辑飞书文档
+    api.registerTool(
+      (ctx) => {
+        if (ctx.config) {
+          setToolConfig(ctx.config);
+        }
+        return createEditFeishuDocTool();
+      },
+      { names: ["edit_feishu_doc"] }
     );
 
     // 注册消息发送钩子，实现双向同步

@@ -12,6 +12,7 @@ import {
   readDocument,
   deleteFile,
   appendToDocument,
+  editDocument,
 } from "./doc-service.js";
 
 // 配置引用
@@ -219,8 +220,10 @@ export function createReadFeishuDocTool() {
         };
       }
 
-      const documentId = String(params.documentId || "");
-      if (!documentId.trim()) {
+      const documentId = String(params.documentId || "").trim();
+      console.log(`[feishu-tools] read_feishu_doc 参数: documentId="${documentId}" (长度: ${documentId.length})`);
+      
+      if (!documentId) {
         return {
           content: [{ type: "text", text: "❌ 文档ID不能为空" }],
           details: { success: false, error: "文档ID为空" },
@@ -271,10 +274,11 @@ export function createAppendToFeishuDocTool() {
         };
       }
 
-      const documentId = String(params.documentId || "");
+      const documentId = String(params.documentId || "").trim();
       const content = String(params.content || "");
+      console.log(`[feishu-tools] append_to_feishu_doc 参数: documentId="${documentId}" (长度: ${documentId.length})`);
 
-      if (!documentId.trim()) {
+      if (!documentId) {
         return {
           content: [{ type: "text", text: "❌ 文档ID不能为空" }],
           details: { success: false, error: "文档ID为空" },
@@ -356,6 +360,68 @@ export function createDeleteFeishuFileTool() {
         }
         return {
           content: [{ type: "text", text: `❌ 删除文件失败：${result.error}` }],
+          details: { success: false, error: result.error },
+        };
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: "text", text: `❌ 操作失败：${error}` }],
+          details: { success: false, error },
+        };
+      }
+    },
+  };
+}
+
+/**
+ * 创建编辑飞书文档工具
+ */
+export function createEditFeishuDocTool() {
+  return {
+    name: "edit_feishu_doc",
+    description: "编辑（替换）飞书文档的内容。会用新内容替换整个文档内容。",
+    parameters: Type.Object({
+      documentId: Type.String({ description: "文档ID（从文档链接中获取）" }),
+      newContent: Type.String({ description: "新的文档内容（支持 Markdown 格式）" }),
+    }),
+    async execute(_id: string, params: Record<string, unknown>) {
+      const cfg = configRef;
+      if (!cfg) {
+        return {
+          content: [{ type: "text", text: "❌ 配置未找到" }],
+          details: { success: false, error: "配置未找到" },
+        };
+      }
+
+      const documentId = String(params.documentId || "").trim();
+      const newContent = String(params.newContent || "");
+      console.log(`[feishu-tools] edit_feishu_doc 参数: documentId="${documentId}" (长度: ${documentId.length})`);
+
+      if (!documentId) {
+        return {
+          content: [{ type: "text", text: "❌ 文档ID不能为空" }],
+          details: { success: false, error: "文档ID为空" },
+        };
+      }
+
+      if (!newContent.trim()) {
+        return {
+          content: [{ type: "text", text: "❌ 新内容不能为空" }],
+          details: { success: false, error: "新内容为空" },
+        };
+      }
+
+      try {
+        const result = await editDocument(cfg, documentId, newContent);
+        if (result.success) {
+          const url = `https://feishu.cn/docx/${documentId}`;
+          return {
+            content: [{ type: "text", text: `✅ 文档内容已更新！\n🔗 链接：${url}` }],
+            details: { success: true, documentId, url },
+          };
+        }
+        return {
+          content: [{ type: "text", text: `❌ 编辑文档失败：${result.error}` }],
           details: { success: false, error: result.error },
         };
       } catch (err) {

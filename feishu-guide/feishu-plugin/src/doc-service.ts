@@ -365,6 +365,75 @@ export async function createSpreadsheet(
 }
 
 /**
+ * 编辑文档内容（替换整个文档内容）
+ */
+export async function editDocument(
+  cfg: OpenClawConfig,
+  documentId: string,
+  newContent: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const client = getClient(cfg);
+    
+    // 1. 获取文档的所有 blocks
+    const blocksRes = await client.docx.documentBlock.list({
+      path: { document_id: documentId },
+      params: { page_size: 500, document_revision_id: -1 },
+    });
+    
+    if (blocksRes.code !== 0) {
+      return { success: false, error: `获取文档结构失败: ${blocksRes.msg}` };
+    }
+    
+    const blocks = blocksRes.data?.items || [];
+    // 过滤出文本类型的 blocks (type 2-15 是各种文本/列表类型)
+    const contentBlocks = blocks.filter(b => b.block_type >= 2 && b.block_type <= 15);
+    
+    // 2. 删除所有内容 blocks
+    if (contentBlocks.length > 0) {
+      // 使用 batch_delete 删除所有子块
+      try {
+        await client.docx.documentBlockChildren.batchDelete({
+          path: { document_id: documentId, block_id: documentId },
+          params: { document_revision_id: -1 },
+          data: {
+            start_index: 0,
+            end_index: contentBlocks.length,
+          },
+        });
+      } catch (err) {
+        // 如果批量删除失败，继续尝试添加新内容
+        console.warn(`[feishu-doc] 删除旧内容失败，尝试直接覆盖: ${err}`);
+      }
+    }
+    
+    // 3. 添加新内容
+    const newBlocks = markdownToBlocks(newContent);
+    if (newBlocks.length > 0) {
+      const addRes = await client.docx.documentBlockChildren.create({
+        path: { document_id: documentId, block_id: documentId },
+        params: { document_revision_id: -1 },
+        data: {
+          children: newBlocks,
+          index: 0,
+        },
+      });
+      
+      if (addRes.code !== 0) {
+        return { success: false, error: `添加新内容失败: ${addRes.msg}` };
+      }
+    }
+    
+    console.log(`[feishu-doc] 文档内容已更新: ${documentId}`);
+    return { success: true };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    console.error(`[feishu-doc] 编辑文档失败: ${error}`);
+    return { success: false, error };
+  }
+}
+
+/**
  * 读取文档内容
  */
 export async function readDocument(
