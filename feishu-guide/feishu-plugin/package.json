@@ -1,0 +1,14 @@
+{
+  "name": "@clawdbot/feishu",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Clawdbot 飞书频道插件",
+  "clawdbot": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.35.0"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "name": "mcp-ssh",
+  "version": "1.0.0",
+  "description": "MCP server for SSH connection - execute commands on remote servers",
+  "type": "module",
+  "main": "build/index.js",
+  "bin": {
+    "mcp-ssh": "./build/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node build/index.js",
+    "dev": "tsc && node build/index.js"
+  },
+  "keywords": [
+    "mcp",
+    "ssh",
+    "remote"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "ssh2": "^1.15.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/ssh2": "^1.15.5",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "mcp-ssh": {
+      "command": "node",
+      "args": ["E:/AIcode/moltbot/mcp-ssh/build/index.js"]
+    }
+  }
+}

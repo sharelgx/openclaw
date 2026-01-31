@@ -1,0 +1,30 @@
+# 依赖
+node_modules/
+.pnpm-store/
+
+# 大型第三方仓库（可选克隆）
+n8n-repo/
+
+# 敏感文件
+*.pem
+*.key
+.env
+.env.*
+credentials.json
+
+# 构建输出
+dist/
+build/
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 压缩包
+*.tar.gz
+*.zip
