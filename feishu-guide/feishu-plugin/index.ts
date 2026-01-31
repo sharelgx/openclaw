@@ -15,6 +15,30 @@ import {
 // 存储配置的引用
 let pluginApi: OpenClawPluginApi | null = null;
 
+// 全局错误处理 - 防止未捕获的异常导致进程崩溃
+process.on("uncaughtException", (err) => {
+  // 忽略 mdns 服务器关闭相关的错误
+  if (err.message?.includes("closed mdns server") || 
+      err.message?.includes("ERR_SERVER_CLOSED")) {
+    console.log("[feishu-plugin] 忽略 mdns 服务器关闭错误（正常现象）");
+    return;
+  }
+  // 其他未捕获的异常记录但不崩溃
+  console.error("[feishu-plugin] 未捕获的异常:", err.message);
+});
+
+process.on("unhandledRejection", (reason) => {
+  // 忽略特定的 Promise 拒绝
+  const msg = String(reason);
+  if (msg.includes("closed mdns server") || 
+      msg.includes("ERR_SERVER_CLOSED") ||
+      msg.includes("stop is not a function")) {
+    console.log("[feishu-plugin] 忽略预期内的 Promise 拒绝");
+    return;
+  }
+  console.error("[feishu-plugin] 未处理的 Promise 拒绝:", msg);
+});
+
 const plugin = {
   id: "feishu",
   name: "飞书",

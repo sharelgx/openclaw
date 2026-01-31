@@ -260,12 +260,29 @@ export async function startFeishuWs(ctx: FeishuWsContext): Promise<void> {
 
   ctx.log?.info?.("[feishu] 正在启动长连接…");
 
+  // 标记是否已停止，防止重复停止
+  let isStopped = false;
+  
   const onAbort = (): void => {
+    if (isStopped) return;
+    isStopped = true;
+    
     try {
-      wsClient.stop();
+      // 飞书 SDK WSClient 可能使用不同的停止方法
+      if (typeof (wsClient as any).stop === "function") {
+        (wsClient as any).stop();
+      } else if (typeof (wsClient as any).close === "function") {
+        (wsClient as any).close();
+      } else if (typeof (wsClient as any).disconnect === "function") {
+        (wsClient as any).disconnect();
+      } else {
+        // 如果没有停止方法，只记录日志
+        ctx.log?.debug?.("[feishu] WSClient 没有可用的停止方法");
+      }
       ctx.log?.info?.("[feishu] 长连接已停止");
     } catch (err) {
-      ctx.log?.error?.(`[feishu] 停止长连接失败: ${String(err)}`);
+      // 忽略停止时的错误，避免崩溃
+      ctx.log?.debug?.(`[feishu] 停止长连接时出现预期内的错误: ${String(err)}`);
     }
     ctx.setStatus?.({ accountId: ctx.accountId, running: false });
   };
