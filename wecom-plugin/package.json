@@ -1,0 +1,18 @@
+{
+  "name": "@clawdbot/wecom",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Clawdbot 企业微信频道插件",
+  "clawdbot": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "dependencies": {
+    "@wecom/crypto": "^1.0.1",
+    "xml2js": "^0.6.2"
+  },
+  "devDependencies": {
+    "@types/xml2js": "^0.4.14"
+  }
+}
