@@ -1,12 +1,12 @@
-import type { ClawdbotRuntime } from "clawdbot/plugin-sdk";
+import type { PluginRuntime } from "openclaw/plugin-sdk";
 
-let runtime: ClawdbotRuntime | null = null;
+let runtime: PluginRuntime | null = null;
 
-export function setFeishuRuntime(rt: ClawdbotRuntime) {
+export function setFeishuRuntime(rt: PluginRuntime) {
   runtime = rt;
 }
 
-export function getFeishuRuntime(): ClawdbotRuntime {
+export function getFeishuRuntime(): PluginRuntime {
   if (!runtime) {
     throw new Error("飞书 runtime 未初始化");
   }

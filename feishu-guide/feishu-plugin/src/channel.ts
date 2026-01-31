@@ -1,6 +1,7 @@
-import type { ChannelPlugin } from "clawdbot/plugin-sdk";
+import type { ChannelPlugin } from "openclaw/plugin-sdk";
 import { getFeishuRuntime } from "./runtime.js";
 import { startFeishuWs } from "./feishu-ws.js";
+import { sendMessageFeishu } from "./send.js";
 
 export interface FeishuAccount {
   accountId: string;
@@ -10,6 +11,8 @@ export interface FeishuAccount {
     appId?: string;
     appSecret?: string;
     enabled?: boolean;
+    dmPolicy?: string;
+    allowFrom?: string[];
   };
 }
 
@@ -64,6 +67,8 @@ export const feishuPlugin: ChannelPlugin<FeishuAccount> = {
           appId: feishuConfig?.appId,
           appSecret: feishuConfig?.appSecret,
           enabled: feishuConfig?.enabled,
+          dmPolicy: feishuConfig?.dmPolicy,
+          allowFrom: feishuConfig?.allowFrom,
         },
       };
     },
@@ -101,7 +106,7 @@ export const feishuPlugin: ChannelPlugin<FeishuAccount> = {
       allowFrom: (cfg.channels?.feishu as any)?.allowFrom ?? [],
       policyPath: "channels.feishu.dmPolicy",
       allowFromPath: "channels.feishu.",
-      approveHint: "clawdbot pairing approve feishu <code>",
+      approveHint: "openclaw pairing approve feishu <code>",
       normalizeEntry: (raw) => raw.trim(),
     }),
     collectWarnings: () => [],
@@ -129,9 +134,34 @@ export const feishuPlugin: ChannelPlugin<FeishuAccount> = {
       // TODO: 清理飞书客户端
       return { success: true };
     },
-    send: async ({ target, blocks }) => {
+    send: async ({ target, blocks, cfg, accountId }) => {
       const runtime = getFeishuRuntime();
-      // TODO: 实现发送消息逻辑
+      
+      // 将 blocks 转换为文本
+      let text = "";
+      for (const block of blocks) {
+        if (block.type === "text") {
+          text += block.text + "\n";
+        } else if (block.type === "markdown") {
+          text += block.markdown + "\n";
+        }
+      }
+      text = text.trim();
+      
+      if (!text) {
+        throw new Error("消息内容为空");
+      }
+      
+      // 发送消息
+      const to = target.chatId?.startsWith("ou_") 
+        ? `user:${target.chatId}` 
+        : target.chatId || "";
+      
+      await sendMessageFeishu(to, text, {
+        cfg,
+        accountId: accountId || "default",
+      });
+      
       return {
         messageId: `feishu_${Date.now()}`,
         timestamp: Date.now(),
@@ -160,6 +190,75 @@ export const feishuPlugin: ChannelPlugin<FeishuAccount> = {
       ctx.setStatus?.({ accountId: account.accountId, running: true, lastError: null });
       ctx.log?.info?.(`[feishu] 启动长连接 (account=${account.accountId})`);
       return startFeishuWs(ctx);
+    },
+  },
+  outbound: {
+    deliveryMode: "direct",
+    textChunkLimit: 4000,
+    chunker: (text, limit) => {
+      if (!text) return [];
+      if (limit <= 0 || text.length <= limit) return [text];
+      const chunks: string[] = [];
+      let remaining = text;
+      while (remaining.length > 0) {
+        if (remaining.length <= limit) {
+          chunks.push(remaining);
+          break;
+        }
+        // 在换行符处分割
+        let splitAt = remaining.lastIndexOf("\n", limit);
+        if (splitAt <= 0) splitAt = limit;
+        chunks.push(remaining.slice(0, splitAt));
+        remaining = remaining.slice(splitAt).trimStart();
+      }
+      return chunks;
+    },
+    chunkerMode: "markdown",
+    sendText: async ({ to, text, accountId, cfg, replyToId }) => {
+      // 解析目标
+      let targetId = to;
+      if (to.startsWith("user:")) {
+        targetId = to;
+      } else if (to.startsWith("ou_")) {
+        targetId = `user:${to}`;
+      }
+      
+      await sendMessageFeishu(targetId, text, {
+        cfg,
+        accountId: accountId || "default",
+        replyToId,
+      });
+      
+      return { channel: "feishu", messageId: `feishu_${Date.now()}` };
+    },
+    sendMedia: async ({ to, text, mediaUrl, accountId, cfg, replyToId }) => {
+      // 飞书暂时只发送文本，忽略媒体
+      let targetId = to;
+      if (to.startsWith("user:")) {
+        targetId = to;
+      } else if (to.startsWith("ou_")) {
+        targetId = `user:${to}`;
+      }
+      
+      const messageText = text || (mediaUrl ? `[媒体: ${mediaUrl}]` : "");
+      if (messageText) {
+        await sendMessageFeishu(targetId, messageText, {
+          cfg,
+          accountId: accountId || "default",
+          replyToId,
+        });
+      }
+      
+      return { channel: "feishu", messageId: `feishu_${Date.now()}` };
+    },
+    resolveTarget: ({ to }) => {
+      const trimmed = to?.trim();
+      if (!trimmed) return null;
+      // 支持 user:xxx 或直接的 open_id
+      if (trimmed.startsWith("user:") || trimmed.startsWith("ou_") || trimmed.startsWith("oc_")) {
+        return { to: trimmed };
+      }
+      return null;
     },
   },
 };

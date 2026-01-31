@@ -4,9 +4,10 @@
  * 选择「使用长连接接收事件」时，无需公网域名、无需加密策略，事件通过 SDK 的 WebSocket 通道推送。
  */
 import * as Lark from "@larksuiteoapi/node-sdk";
-import type { ChannelGatewayContext, PluginRuntime } from "clawdbot/plugin-sdk";
+import type { ChannelGatewayContext, PluginRuntime } from "openclaw/plugin-sdk";
 import { getFeishuRuntime } from "./runtime.js";
-import { sendMessageFeishu } from "./send.js";
+import { sendMessageFeishu, sendThinkingStatus, updateMessage } from "./send.js";
+import { setActiveFeishuChat } from "./sync-service.js";
 
 export type FeishuWsContext = Pick<
   ChannelGatewayContext,
@@ -104,6 +105,16 @@ async function handleFeishuMessage(params: {
   const isGroupChat = chatType ? chatType !== "p2p" : chatId !== senderId;
   const resolvedChatType = isGroupChat ? "group" : "direct";
 
+  // 设置活跃的飞书聊天，用于消息同步
+  if (!isGroupChat) {
+    setActiveFeishuChat({
+      userId: senderId,
+      chatId: chatId,
+      accountId: account.accountId,
+      lastMessageId: messageId,
+    }, ctx.cfg);
+  }
+
   // 解析路由
   const route = core.channel.routing.resolveAgentRoute({
     cfg: ctx.cfg,
@@ -117,7 +128,8 @@ async function handleFeishuMessage(params: {
 
   // 4. 构建 InboundContext
   const timestamp = Date.now();
-  const sessionKey = `feishu:${account.accountId}:${chatId}`;
+  // 使用 route 中的 sessionKey，支持 dmScope 配置（如 "main" 合并所有私聊）
+  const sessionKey = route.sessionKey;
   const from = `feishu:${senderId}`;
   // 如果是群聊，回复到群；如果是私聊，回复给用户
   const to = isGroupChat ? chatId : `user:${senderId}`;
@@ -144,7 +156,26 @@ async function handleFeishuMessage(params: {
     OriginatingTo: to,
   });
 
-  // 5. 创建 ReplyDispatcher
+  // 5. 发送"正在思考"状态并准备流式更新
+  let streamMessageId: string | null = null;
+  let streamClient: Lark.Client | null = null;
+  let accumulatedText = "";
+  let lastUpdateTime = 0;
+  const UPDATE_INTERVAL = 500; // 每 500ms 更新一次
+
+  try {
+    const result = await sendThinkingStatus(to, {
+      cfg: ctx.cfg,
+      accountId: account.accountId,
+    });
+    streamMessageId = result.messageId;
+    streamClient = result.client;
+    ctx.log?.info?.(`[feishu] 已发送思考状态，准备流式更新`);
+  } catch (err) {
+    ctx.log?.warn?.(`[feishu] 发送思考状态失败，将使用普通回复: ${String(err)}`);
+  }
+
+  // 创建 ReplyDispatcher
   const tableMode = core.channel.text.resolveMarkdownTableMode(ctx.cfg);
   const textLimit = 4000; // 飞书单条消息限制
 
@@ -155,14 +186,32 @@ async function handleFeishuMessage(params: {
       deliver: async (payload) => {
         const replyText = payload.text ?? "";
         const converted = core.channel.text.convertMarkdownTables(replyText, tableMode);
-        const chunks = core.channel.text.chunkMarkdownText(converted, textLimit);
 
-        for (const chunk of chunks) {
-          await sendMessageFeishu(to, chunk, {
-            cfg: ctx.cfg,
-            accountId: account.accountId,
-            replyToId: messageId,
-          });
+        // 如果有流式消息 ID，使用更新方式
+        if (streamMessageId && streamClient) {
+          accumulatedText = converted;
+          const now = Date.now();
+          
+          // 限流：至少间隔 UPDATE_INTERVAL ms
+          if (now - lastUpdateTime >= UPDATE_INTERVAL) {
+            try {
+              await updateMessage(streamClient, streamMessageId, accumulatedText, false);
+              lastUpdateTime = now;
+              ctx.log?.debug?.(`[feishu] 流式更新完成，长度=${accumulatedText.length}`);
+            } catch (err) {
+              ctx.log?.warn?.(`[feishu] 流式更新失败: ${String(err)}`);
+            }
+          }
+        } else {
+          // 回退到普通发送
+          const chunks = core.channel.text.chunkMarkdownText(converted, textLimit);
+          for (const chunk of chunks) {
+            await sendMessageFeishu(to, chunk, {
+              cfg: ctx.cfg,
+              accountId: account.accountId,
+              replyToId: messageId,
+            });
+          }
         }
       },
       onError: (err, info) => {
@@ -178,6 +227,17 @@ async function handleFeishuMessage(params: {
     dispatcher,
     replyOptions,
   });
+
+  // 最终更新（确保最后内容完整显示）
+  if (streamMessageId && streamClient && accumulatedText) {
+    try {
+      await updateMessage(streamClient, streamMessageId, accumulatedText, false);
+      ctx.log?.info?.(`[feishu] 最终更新完成`);
+    } catch (err) {
+      ctx.log?.warn?.(`[feishu] 最终更新失败: ${String(err)}`);
+    }
+  }
+
   markDispatchIdle();
   ctx.log?.info?.(`[feishu] AI 处理完成`);
 }
@@ -294,7 +354,8 @@ export async function startFeishuWs(ctx: FeishuWsContext): Promise<void> {
 
           const chatId = message.chat_id ?? "";
           const chatType = message.chat_type ?? "";
-          const senderId = sender.sender_id?.user_id ?? sender.sender_id?.open_id ?? "";
+          // 优先使用 open_id，因为发送消息时需要 open_id 格式
+          const senderId = sender.sender_id?.open_id ?? sender.sender_id?.user_id ?? "";
           const messageId = message.message_id ?? "";
           const messageType = message.message_type ?? "";
           const rawContent = message.content ?? "";
